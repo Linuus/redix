@@ -46,6 +46,10 @@ defmodule Redix.ConnectionError do
       finds no reachable replica for the slot, most often because the cluster wasn't
       started with `read_from_replicas: true`.
 
+    * `{:auth_error, error}`: when the `:retry_on_auth_error` option is set and the
+      `AUTH` command fails with the given `Redix.Error` while connecting, so Redix
+      closes the connection and reconnects.
+
   """
 
   @typedoc """
@@ -60,7 +64,9 @@ defmodule Redix.ConnectionError do
       `:ssl` module.
 
   """
-  @type t() :: %__MODULE__{reason: atom() | {:wrong_role, binary()}}
+  @type t() :: %__MODULE__{
+          reason: atom() | {:wrong_role, binary()} | {:auth_error, Redix.Error.t()}
+        }
 
   defexception [:reason]
 
@@ -86,6 +92,10 @@ defmodule Redix.ConnectionError do
   # Returned during sentinel connections when the server has an
   # unexpected role (for example, "master" instead of "slave").
   defp format_reason({:wrong_role, role}), do: "wrong role: #{role}"
+
+  # Returned when the :retry_on_auth_error option is set and AUTH fails while connecting.
+  defp format_reason({:auth_error, %Redix.Error{} = error}),
+    do: "authentication failed: " <> Exception.message(error)
 
   # Returned when a health check fails: an in-flight command went unanswered for
   # longer than the :health_check_interval, so Redix tore the connection down.

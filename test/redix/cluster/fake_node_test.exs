@@ -1470,6 +1470,66 @@ defmodule Redix.Cluster.FakeNodeTest do
       # of times, not thousands as in the pre-fix restart storm.
       assert FakeNode.connections_accepted(replica) <= 3
     end
+
+    # With retry_on_auth_error: true, a node that fails AUTH retries on its own
+    # backoff instead of stopping and being parked like the replica above.
+    @tag :capture_log
+    test "retry_on_auth_error: true reconnects a node that fails AUTH instead of parking it" do
+      cluster = :"auth_retry_#{System.unique_integer([:positive])}"
+      parent = self()
+
+      events = [
+        [:redix, :connection],
+        [:redix, :cluster, :node_connection_failed]
+      ]
+
+      :telemetry.attach_many(
+        cluster,
+        events,
+        fn event, _, meta, _ -> send(parent, {event, meta}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(cluster) end)
+
+      node = FakeNode.reserve()
+
+      FakeNode.serve(node, fn
+        ["AUTH", "good"] -> "+OK\r\n"
+        ["AUTH", _password] -> "-WRONGPASS invalid username-password pair\r\n"
+        ["CLUSTER", "SLOTS"] -> FakeNode.cluster_slots([{0, 16_383, node}])
+        ["PING"] -> "+PONG\r\n"
+        _other -> "+OK\r\n"
+      end)
+
+      # The topology fetch gets "good", the node connection gets "bad" once, then
+      # "good" for every later attempt.
+      {:ok, passwords} = Agent.start_link(fn -> ["good", "bad"] end)
+
+      start_supervised!(
+        {Redix.Cluster,
+         name: cluster,
+         nodes: ["redis://#{node}"],
+         primary_pool_size: 1,
+         sync_connect: true,
+         password: {__MODULE__, :next_password, [passwords]},
+         retry_on_auth_error: true,
+         backoff_initial: 50,
+         backoff_max: 50}
+      )
+
+      assert_receive {[:redix, :connection], %{cluster: ^cluster, reconnection: true}}, 1000
+      assert Redix.Cluster.command(cluster, ["PING"]) == {:ok, "PONG"}
+      refute_received {[:redix, :cluster, :node_connection_failed], %{kind: :parked}}
+    end
+  end
+
+  # Password MFA for the test above: pops queued passwords, then returns "good".
+  def next_password(agent) do
+    Agent.get_and_update(agent, fn
+      [password | rest] -> {password, rest}
+      [] -> {"good", []}
+    end)
   end
 
   ## Helpers

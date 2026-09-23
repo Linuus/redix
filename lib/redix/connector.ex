@@ -60,7 +60,8 @@ defmodule Redix.Connector do
       # because disconnecting and retrying doesn't make sense, but we should not
       # stop if the issue is at the network layer, because it might happen due to
       # a race condition where the network conn breaks after connecting but before
-      # AUTH/SELECT.
+      # AUTH/SELECT. With :retry_on_auth_error, auth/4 turns AUTH errors into
+      # retryable ones, since a password MFA can return a new password next time.
       case auth_and_select(transport, socket, opts, timeout) do
         :ok -> {:ok, socket, Format.format_host_and_port(host, port)}
         {:error, %Redix.Error{} = error} -> {:stop, error}
@@ -185,10 +186,16 @@ defmodule Redix.Connector do
   end
 
   defp auth_and_select(transport, socket, opts, timeout) do
-    with :ok <- maybe_auth(transport, socket, opts, timeout),
+    with :ok <- auth(transport, socket, opts, timeout),
          :ok <- maybe_select(transport, socket, opts, timeout),
          :ok <- maybe_readonly(transport, socket, opts, timeout),
          do: :ok
+  end
+
+  defp auth(transport, socket, opts, timeout) do
+    with {:error, %Redix.Error{} = error} <- maybe_auth(transport, socket, opts, timeout) do
+      if opts[:retry_on_auth_error], do: {:error, {:auth_error, error}}, else: {:error, error}
+    end
   end
 
   defp maybe_auth(transport, socket, opts, timeout) do
