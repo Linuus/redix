@@ -168,7 +168,7 @@ defmodule RedixTest do
       assert {:error, %ConnectionError{reason: :closed}} = Redix.command(pid, ["PING"])
 
       assert_receive {[:redix, :failed_connection], %{connection: ^pid, reason: reason}}
-      assert Exception.message(reason) =~ "authentication failed: "
+      assert %ConnectionError{reason: %Error{}} = reason
 
       Agent.update(agent, fn _old_password -> "some-password" end)
 

@@ -68,7 +68,7 @@ defmodule Redix.Connector do
           {:ok, socket, Format.format_host_and_port(host, port)}
 
         {:error, {:auth_error, error}} ->
-          if opts[:retry_on_auth_error], do: {:error, {:auth_error, error}}, else: {:stop, error}
+          if opts[:retry_on_auth_error], do: {:error, error}, else: {:stop, error}
 
         {:error, %Redix.Error{} = error} ->
           {:stop, error}
